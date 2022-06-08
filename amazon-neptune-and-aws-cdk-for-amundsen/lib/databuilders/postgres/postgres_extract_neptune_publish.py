@@ -83,7 +83,7 @@ def run_postgres_job(job_name):
 
     where_clause_suffix = textwrap.dedent(
     """
-        where table_schema = '{}'
+        schemaname = '{}'
     """.format(postgres_schema)
     )
 

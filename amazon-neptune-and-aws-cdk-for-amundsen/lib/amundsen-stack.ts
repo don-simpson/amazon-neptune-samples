@@ -10,6 +10,9 @@ import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as es from 'aws-cdk-lib/aws-elasticsearch';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import { Bucket } from 'aws-cdk-lib/aws-s3';
+import { DockerImageAsset } from 'aws-cdk-lib/aws-ecr-assets';
+
+const path = require('path');
 
 export interface AmundsenStackProps extends StackProps {
 	vpc: ec2.Vpc;
@@ -25,8 +28,13 @@ export class AmundsenStack extends Stack {
   constructor(scope: App, id: string, props: AmundsenStackProps) {
     super(scope, id, props);
 
-	const application = this.node.tryGetContext('application');
-	const environment = this.node.tryGetContext('environment');
+  	const application = this.node.tryGetContext('application');
+  	const environment = this.node.tryGetContext('environment');
+  
+  	const FLASK_OIDC_CONFIG_URL = this.node.tryGetContext('FLASK_OIDC_CONFIG_URL');
+  	const FLASK_OIDC_PROVIDER_NAME = this.node.tryGetContext('FLASK_OIDC_PROVIDER_NAME');
+  	const FLASK_OIDC_CLIENT_ID = this.node.tryGetContext('FLASK_OIDC_CLIENT_ID');
+  	const FLASK_OIDC_CLIENT_SECRET = this.node.tryGetContext('FLASK_OIDC_CLIENT_SECRET');
 
     var subnets = props.vpc.privateSubnets.map((a) => {
       return a.subnetId;
@@ -61,7 +69,7 @@ export class AmundsenStack extends Stack {
         ebsEnabled: true,
         volumeSize: 10,
       },
-      elasticsearchVersion: '6.7',
+      elasticsearchVersion: '7.10',
       vpcOptions: {
         securityGroupIds: [props.ingressSecurityGroup.securityGroupId],
         subnetIds: [props.vpc.privateSubnets[0].subnetId]
@@ -259,14 +267,28 @@ export class AmundsenStack extends Stack {
       memoryLimitMiB: 4096,
       taskRole: taskRole,
     });
+    
+    const amundsenFrontendImage = new DockerImageAsset(this, 'AmundsenFrontendImage', {
+      directory: path.join(__dirname, 'amundsen'),
+      file: 'Dockerfile.frontend.public'
+    });
 
     const frontendContainer = amundsenFrontend.addContainer('AmundsenFrontendContainer', {
-      image: ecs.ContainerImage.fromRegistry('amundsendev/amundsen-frontend:3.7.0'),
+      image: ecs.ContainerImage.fromDockerImageAsset(amundsenFrontendImage),
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'amundsen-frontend' }),
       environment: {
         SEARCHSERVICE_BASE: 'http://localhost:5001',
         METADATASERVICE_BASE: 'http://localhost:5002',
-        FRONTEND_SVC_CONFIG_MODULE_CLASS: 'amundsen_application.config.TestConfig',
+        FRONTEND_SVC_CONFIG_MODULE_CLASS: 'amundsen_application.oidc_config.OidcConfig',
+        APP_WRAPPER: 'flaskoidc',
+        APP_WRAPPER_CLASS:  'FlaskOIDC',
+        FLASK_OIDC_WHITELISTED_ENDPOINTS: 'status,healthcheck,health',
+        SQLALCHEMY_DATABASE_URI: 'sqlite:///sessions.db',
+        USER_DETAIL_METHOD: 'get_user_details',
+        FLASK_OIDC_CONFIG_URL: `${FLASK_OIDC_CONFIG_URL}`,
+        FLASK_OIDC_PROVIDER_NAME: `${FLASK_OIDC_PROVIDER_NAME}`,
+        FLASK_OIDC_CLIENT_ID: `${FLASK_OIDC_CLIENT_ID}`,
+        FLASK_OIDC_CLIENT_SECRET: `${FLASK_OIDC_CLIENT_SECRET}`
       },
       cpu: 256,
       memoryLimitMiB: 512,
@@ -276,8 +298,13 @@ export class AmundsenStack extends Stack {
       containerPort: 5000
     });
 
+    const amundsenMetadataImage = new DockerImageAsset(this, 'AmundsenMetadataImage', {
+      directory: path.join(__dirname, 'amundsen'),
+      file: 'Dockerfile.metadata.public'
+    });
+
     const metadataContainer = amundsenFrontend.addContainer('AmundsenMetadataContainer', {
-      image: ecs.ContainerImage.fromRegistry('amundsendev/amundsen-metadata:3.5.0'),
+      image: ecs.ContainerImage.fromDockerImageAsset(amundsenMetadataImage),
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'amundsen-metadata' }),
       environment: {
         METADATA_SVC_CONFIG_MODULE_CLASS: 'metadata_service.config.NeptuneConfig',
@@ -289,6 +316,10 @@ export class AmundsenStack extends Stack {
         PROXY_HOST: `wss://${this.neptuneCluster.attrEndpoint}:8182/gremlin`,
         PROXY_ENCRYPTED: 'True',
         PROXY_VALIDATE_SSL: 'False',
+        FLASK_OIDC_CONFIG_URL: `${FLASK_OIDC_CONFIG_URL}`,
+        FLASK_OIDC_PROVIDER_NAME: `${FLASK_OIDC_PROVIDER_NAME}`,
+        FLASK_OIDC_CLIENT_ID: `${FLASK_OIDC_CLIENT_ID}`,
+        FLASK_OIDC_CLIENT_SECRET: `${FLASK_OIDC_CLIENT_SECRET}`
       },
       cpu: 256,
       memoryLimitMiB: 512
@@ -298,8 +329,13 @@ export class AmundsenStack extends Stack {
       containerPort: 5002
     });
 
+    const amundsenSearchImage = new DockerImageAsset(this, 'AmundsenSearchImage', {
+      directory: path.join(__dirname, 'amundsen'),
+      file: 'Dockerfile.search.public'
+    });
+
     const searchContainer = amundsenFrontend.addContainer('AmundsenSearchContainer', {
-      image: ecs.ContainerImage.fromRegistry('amundsendev/amundsen-search:2.5.1'),
+      image: ecs.ContainerImage.fromDockerImageAsset(amundsenSearchImage),
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'amundsen-search' }),
       environment: {
         PROXY_CLIENT: 'ELASTICSEARCH',
@@ -309,6 +345,10 @@ export class AmundsenStack extends Stack {
         PORT: '5001',
         PROXY_PORT: '443',
         PROXY_ENDPOINT: `https://${this.esDomain.attrDomainEndpoint}`,
+        FLASK_OIDC_CONFIG_URL: `${FLASK_OIDC_CONFIG_URL}`,
+        FLASK_OIDC_PROVIDER_NAME: `${FLASK_OIDC_PROVIDER_NAME}`,
+        FLASK_OIDC_CLIENT_ID: `${FLASK_OIDC_CLIENT_ID}`,
+        FLASK_OIDC_CLIENT_SECRET: `${FLASK_OIDC_CLIENT_SECRET}`
       },
       cpu: 256,
       memoryLimitMiB: 512

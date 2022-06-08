@@ -38,6 +38,10 @@
     "sample-data-redshift-query-s3-bucket": "amundsen-neptune-blog",
     "sample-data-redshift-query-filename": "amundsen_dw.sql",
     "application":"amundsen",
-    "environment":"dev"
+    "environment":"dev",
+    "FLASK_OIDC_CONFIG_URL": "https://<Okta Domain>/.well-known/openid-configuration",
+    "FLASK_OIDC_PROVIDER_NAME": "okta",
+    "FLASK_OIDC_CLIENT_ID": "<Okta Application Client Id>",
+    "FLASK_OIDC_CLIENT_SECRET": "<Okta Application Client Secret>"
   }
 }
